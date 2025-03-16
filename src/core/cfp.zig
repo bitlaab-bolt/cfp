@@ -42,34 +42,42 @@ const Error = error {
     UnexpectedDataType,
 };
 
-const SingletonObject = struct { heap: Allocator, src: Str, secs: []Section };
+const Option = struct { env: ?u8 = null, path: Str };
+
+const SingletonObject = struct {
+    heap: Allocator,
+    env: ?u8,
+    src: Str,
+    secs: []Section,
+};
 
 var so: ?SingletonObject = null;
 
 const Self = @This();
 
 /// # Initiates a Singleton
-/// `file_path` - App configuration file path e.g., `app.conf`
-pub fn init(heap: Allocator, file_path: Str) !void {
+/// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
+/// - `opt.path` - App configuration file path e.g., `../path/app.conf`
+pub fn init(heap: Allocator, opt: Option) !void {
     if (Self.so != null) @panic("Initiate Only Once Per Process!");
 
     const max_size = 1024 * 1024 * 1; // 1 MB
-    const file_content = try Utils.loadFile(heap, file_path, max_size);
+    const src_data = try Utils.loadFile(heap, opt.path, max_size);
 
-    var p = Parser.init(file_content);
+    var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
         const info = p.info();
         const trace = p.trace(256);
         std.log.err(
             "{s} at line {d}:{d}\n\n{s} <<< HERE\n",
-            .{file_path, info.line, info.column, trace}
+            .{opt.path, info.line, info.column, trace}
         );
 
-        heap.free(file_content);
+        heap.free(src_data);
         return err;
     };
 
-    Self.so = .{.heap = heap, .src = file_content, .secs = data};
+    Self.so = .{.heap = heap, .env = opt.env, .src = src_data, .secs = data};
 }
 
 /// # Destroys the Singleton
@@ -101,6 +109,19 @@ fn free(heap: Allocator, section: *Section) void {
             heap.free(sections);
         }
     }
+}
+
+/// # Returns the Environment Value
+/// **Remarks:** If env is not set at `init()`, **null** will be returned
+/// - `T` - Must be an user defined enum type
+pub fn getEnv(comptime T: type) ?T {
+    if (@typeInfo(T) != .@"enum") {
+        const err_str = "Cfp: `T` Must be an Enum Type. Found `{s}`";
+        @compileError(std.fmt.comptimePrint(err_str, .{@typeName(T)}));
+    }
+
+    const sop = Self.iso();
+    return if (sop.env) |env| @as(T, @enumFromInt(env)) else null;
 }
 
 /// # Returns an Integer Value
@@ -501,7 +522,7 @@ test "App Config Demo" {
     // Feeding file content manually because `init()` expects file path
     var p = Parser.init(src_data);
     const data = try SourceContent.parse(heap, &p);
-    Self.so = .{.heap = heap, .src = src_data, .secs = data};
+    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
     defer Self.deinit();
 
     try testing.expectEqual(100, try getInt(u8, "global.prop_1"));

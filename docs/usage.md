@@ -84,7 +84,7 @@ var gpa_mem = std.heap.DebugAllocator(.{}){};
 defer std.debug.assert(gpa_mem.deinit() == .ok);
 const heap = gpa_mem.allocator();
 
-try Cfp.init(heap, "app.conf");
+try Cfp.init(heap, .{.path = "app.conf"});
 defer Cfp.deinit();
 
 // Extracts integer into the given integer type
