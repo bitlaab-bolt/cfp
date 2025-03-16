@@ -10,7 +10,7 @@ pub fn main() !void {
 
     std.debug.print("Hello, World!\n", .{});
 
-    try Cfp.init(heap, "app.conf");
+    try Cfp.init(heap, .{.path = "app.conf"});
     defer Cfp.deinit();
 
     // Let's start from here...

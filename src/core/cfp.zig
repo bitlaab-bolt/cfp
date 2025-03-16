@@ -42,8 +42,6 @@ const Error = error {
     UnexpectedDataType,
 };
 
-const Option = struct { env: ?u8 = null, path: Str };
-
 const SingletonObject = struct {
     heap: Allocator,
     env: ?u8,
@@ -54,6 +52,8 @@ const SingletonObject = struct {
 var so: ?SingletonObject = null;
 
 const Self = @This();
+
+pub const Option = struct { env: ?u8 = null, path: Str };
 
 /// # Initiates a Singleton
 /// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
