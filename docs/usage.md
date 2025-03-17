@@ -119,4 +119,6 @@ std.debug.assert(std.mem.eql(u8, "hello", nested_items[2].string));
 std.debug.print("Well done!\n", .{});
 ```
 
+**Remarks:** You can also pass an `env` value and an absolute path for more complex setup when calling `Cfp.init()`.
+
 For dynamic and runtime known configuration make sure to checkout `Cfp.getProperties()` and `Cfp.getSections()` at [API Reference](/reference).

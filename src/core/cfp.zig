@@ -53,16 +53,17 @@ var so: ?SingletonObject = null;
 
 const Self = @This();
 
-pub const Option = struct { env: ?u8 = null, path: Str };
+pub const Option = struct { env: ?u8 = null, dir: ?Str = null, path: Str };
 
 /// # Initiates a Singleton
 /// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
+/// - `opt.dir` - An optional absolute directory path, `/Users/john-doe`
 /// - `opt.path` - App configuration file path e.g., `../path/app.conf`
 pub fn init(heap: Allocator, opt: Option) !void {
     if (Self.so != null) @panic("Initiate Only Once Per Process!");
 
     const max_size = 1024 * 1024 * 1; // 1 MB
-    const src_data = try Utils.loadFile(heap, opt.path, max_size);
+    const src_data = try Utils.loadFile(heap, opt.dir, opt.path, max_size);
 
     var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
@@ -116,7 +117,7 @@ fn free(heap: Allocator, section: *Section) void {
 /// - `T` - Must be an user defined enum type
 pub fn getEnv(comptime T: type) ?T {
     if (@typeInfo(T) != .@"enum") {
-        const err_str = "Cfp: `T` Must be an Enum Type. Found `{s}`";
+        const err_str = "cfp: `T` Must be an Enum Type. Found `{s}`";
         @compileError(std.fmt.comptimePrint(err_str, .{@typeName(T)}));
     }
 
@@ -128,7 +129,7 @@ pub fn getEnv(comptime T: type) ?T {
 /// - `T` - Must be a valid integer type e.g., `u8`, `i32`, `usize` etc.
 pub fn getInt(comptime T: type, query: Str) !T {
     if (@typeInfo(T) != .int) {
-        const err_str = "Cfp: `T` Must be an Integer Type. Found `{s}`";
+        const err_str = "cfp: `T` Must be an Integer Type. Found `{s}`";
         @compileError(std.fmt.comptimePrint(err_str, .{@typeName(T)}));
     }
 
