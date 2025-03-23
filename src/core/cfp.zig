@@ -153,7 +153,7 @@ pub fn getStr(query: Str) !Str {
 }
 
 /// # Extracts Pair Value
-fn getValue(query: Str) !Value {
+pub fn getValue(query: Str) !Value {
     const offset = tailIndex(query);
     if (getProperties(query[0..offset])) |items| {
         for(items) |item| {
