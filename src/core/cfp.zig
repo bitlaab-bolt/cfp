@@ -53,17 +53,16 @@ var so: ?SingletonObject = null;
 
 const Self = @This();
 
-pub const Option = struct { env: ?u8 = null, dir: ?Str = null, path: Str };
+pub const Option = struct { env: ?u8 = null, abs_path: Str };
 
 /// # Initiates a Singleton
 /// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
-/// - `opt.dir` - An optional absolute directory path, `/Users/john-doe`
-/// - `opt.path` - App configuration file path e.g., `../path/app.conf`
+/// - `opt.abs_path` - An absolute app configuration file path
 pub fn init(heap: Allocator, opt: Option) !void {
     if (Self.so != null) @panic("Initiate Only Once Per Process!");
 
     const max_size = 1024 * 1024 * 1; // 1 MB
-    const src_data = try Utils.loadFile(heap, opt.dir, opt.path, max_size);
+    const src_data = try Utils.loadFile(heap, opt.abs_path, max_size);
 
     var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
@@ -71,7 +70,7 @@ pub fn init(heap: Allocator, opt: Option) !void {
         const trace = p.trace(256);
         std.log.err(
             "{s} at line {d}:{d}\n\n{s} <<< HERE\n",
-            .{opt.path, info.line, info.column, trace}
+            .{opt.abs_path, info.line, info.column, trace}
         );
 
         heap.free(src_data);
@@ -506,10 +505,10 @@ test "App Config Demo" {
     \\ }
     \\
     \\ applet {
-    \\      proj_1 {
-    \\          host_name = "example.com"
-    \\          shared_object = "../proj-1/zig-out/lib/lib-proj-1.so"
-    \\      }
+    \\     proj_1 {
+    \\         host_name = "example.com"
+    \\         shared_object = "../proj-1/zig-out/lib/lib-proj-1.so"
+    \\     }
     \\ }
     ;
 

@@ -10,7 +10,13 @@ pub fn main() !void {
 
     std.debug.print("Hello, World!\n", .{});
 
-    try Cfp.init(heap, .{.path = "app.conf"});
+    const dir = try std.fs.selfExeDirPathAlloc(heap);
+    defer heap.free(dir);
+
+    const path = try std.fmt.allocPrint(heap, "{s}/../../../app.conf", .{dir});
+    defer heap.free(path);
+
+    try Cfp.init(heap, .{.abs_path = path});
     defer Cfp.deinit();
 
     // Let's start from here...
