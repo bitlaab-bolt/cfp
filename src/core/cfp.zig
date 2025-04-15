@@ -225,7 +225,7 @@ pub fn getSections(query: Str) ?[]Section {
 
     while(keys.peek() != null) {
         const key = keys.next().?;
-        const parent = tmp orelse sop.sections;
+        const parent = tmp orelse sop.secs;
         if (nested(parent, key)) |section| tmp = section;
     }
 
