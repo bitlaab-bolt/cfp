@@ -87,7 +87,7 @@ const heap = gpa_mem.allocator();
 const dir = try std.fs.selfExeDirPathAlloc(heap);
 defer heap.free(dir);
 
-// When you are running: ./zig-out/bin/cfp.exe
+// When you are on Windows or are running: `./zig-out/bin/cfp.exe`
 // Make sure to change this path to `{s}/../../app.conf`
 const path = try std.fmt.allocPrint(heap, "{s}/../../../app.conf", .{dir});
 defer heap.free(path);
