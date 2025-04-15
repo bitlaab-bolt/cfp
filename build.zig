@@ -4,9 +4,7 @@ const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{
-        .preferred_optimize_mode = .ReleaseSafe
-    });
+    const optimize = b.standardOptimizeOption(.{});
 
     // Exposing as a dependency for other projects
     const pkg = b.addModule("cfp", .{
@@ -15,13 +13,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize
     });
 
-    // Making executable for this project
-    const exe = b.addExecutable(.{
-        .name = "cfp",
+    const main = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    const app = "cfp";
+    const exe = b.addExecutable(.{.name = app, .root_module = main});
 
     // Self importing package
     exe.root_module.addImport("cfp", pkg);

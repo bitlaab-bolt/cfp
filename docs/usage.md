@@ -1,6 +1,6 @@
 # How to use
 
-First import Cfp on your zig file.
+First, import Cfp on your zig file.
 
 ```zig
 const cfp = @import("cfp");
@@ -80,13 +80,15 @@ settings {
 The following code example demonstrates how to access configuration data at runtime. Cfp uses `.` notation to access nested sections and properties at any level.
 
 ```zig
-var gpa_mem = std.heap.DebugAllocator(.{}){};
+var gpa_mem = std.heap.DebugAllocator(.{}).init;
 defer std.debug.assert(gpa_mem.deinit() == .ok);
 const heap = gpa_mem.allocator();
 
 const dir = try std.fs.selfExeDirPathAlloc(heap);
 defer heap.free(dir);
 
+// When you are running: ./zig-out/bin/cfp.exe
+// Make sure to change this path to `{s}/../../app.conf`
 const path = try std.fmt.allocPrint(heap, "{s}/../../../app.conf", .{dir});
 defer heap.free(path);
 

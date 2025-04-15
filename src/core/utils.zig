@@ -1,4 +1,4 @@
-//! Utility Module
+//! # Utility Module
 
 const std = @import("std");
 const fs = std.fs;
@@ -11,7 +11,7 @@ const SrcLoc = std.builtin.SourceLocation;
 const Str = []const u8;
 
 /// # Loads File Content
-/// **WARNING:** Return value must be freed by the caller
+/// **WARNING:** Return value must be freed by the caller.
 /// - `path` - An absolute file path (e.g., `/users/john/demo.txt`).
 /// - `max_size` - Maximum file size in bytes for the IO buffered reader
 pub fn loadFile(heap: Allocator, path: Str, max_size: usize) !Str {

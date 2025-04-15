@@ -1,4 +1,4 @@
-//! # App Configuration File Parser
+//! # Configuration File Parser
 //! - Parses custom `.conf` file from the given file path
 //! - Creates a singleton instance to be used across the codebase
 //! - Extracts configuration file data into `Cfp` structure at runtime
@@ -27,7 +27,7 @@ const testing = std.testing;
 const ArrayList = std.ArrayList;
 const Allocator = mem.Allocator;
 
-const Utils = @import("./utils.zig");
+const utils = @import("./utils.zig");
 const Parser = @import("./parser.zig");
 
 
@@ -55,14 +55,14 @@ const Self = @This();
 
 pub const Option = struct { env: ?u8 = null, abs_path: Str };
 
-/// # Initiates a Singleton
+/// # Initializes a Singleton
 /// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
 /// - `opt.abs_path` - An absolute app configuration file path
 pub fn init(heap: Allocator, opt: Option) !void {
-    if (Self.so != null) @panic("Initiate Only Once Per Process!");
+    if (Self.so != null) @panic("Initialize Only Once Per Process!");
 
     const max_size = 1024 * 1024 * 1; // 1 MB
-    const src_data = try Utils.loadFile(heap, opt.abs_path, max_size);
+    const src_data = try utils.loadFile(heap, opt.abs_path, max_size);
 
     var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
@@ -92,7 +92,7 @@ pub fn deinit() void {
 
 /// # Internal Static Object
 fn iso() *SingletonObject {
-    if (Self.so == null) @panic("Singleton is not Initiated");
+    if (Self.so == null) @panic("Singleton is not Initialized");
     return &Self.so.?;
 }
 
@@ -112,8 +112,8 @@ fn free(heap: Allocator, section: *Section) void {
 }
 
 /// # Returns the Environment Value
-/// **Remarks:** If env is not set at `init()`, **null** will be returned
-/// - `T` - Must be an user defined enum type
+/// **Remarks:** If env is not set at `init()`, **null** will be returned.
+/// - `T` - Must be an user defined enum type.
 pub fn getEnv(comptime T: type) ?T {
     if (@typeInfo(T) != .@"enum") {
         const err_str = "cfp: `T` Must be an Enum Type. Found `{s}`";

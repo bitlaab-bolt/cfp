@@ -2,7 +2,7 @@
 
 - Edge cases - invalid or malformed formats should fail with out memory leaks.
 
-# Feature
+# Add Feature
 
 - Run all tests from a single command: `zig build test`
 - Better error detection e.g. `^^^` below the error content

@@ -1,8 +1,8 @@
 # cfp
 
-**Configuration File Parser written in Zig**
+**Configuration File Parser**
 
-Quill is an opinionated SQLite wrapper, focuses on performance and code efficiency. Quill provides a compile-time statement builder along with many builtin functionalities and a high-level **CRUD** interface for database activity.
+Cfp is a drop-in replacement for configuration format such as `.ini`, `.json`, `.toml` etc. Cfp focuses on simplicity, clean structure and ease of use.
 
 ## Platform Support
 

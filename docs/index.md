@@ -1,6 +1,6 @@
 # Getting Started
 
-**Configuration File Parser written in Zig**
+**Configuration File Parser**
 
 Cfp is a drop-in replacement for configuration format such as `.ini`, `.json`, `.toml` etc. Cfp focuses on simplicity, clean structure and ease of use.
 
