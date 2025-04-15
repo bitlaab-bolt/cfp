@@ -15,7 +15,7 @@ pub fn main() !void {
 
     // Create a demo `app.conf` file 
 
-    // When you are on Windows or are running: ./zig-out/bin/cfp.exe 
+    // When you are on Windows or running: ./zig-out/bin/cfp.exe 
     // Make sure to change this path to `{s}/../../app.conf`
     const path = try std.fmt.allocPrint(heap, "{s}/../../../app.conf", .{dir});
     defer heap.free(path);
