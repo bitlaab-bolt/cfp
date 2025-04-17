@@ -1,6 +1,6 @@
 # How to use
 
-First, import Cfp on your zig file.
+First, import Cfp on your Zig source file.
 
 ```zig
 const cfp = @import("cfp");
