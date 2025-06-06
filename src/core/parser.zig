@@ -1,4 +1,4 @@
-//! # A Generic Plain Text Parser - v1.0.0
+//! # A Generic Plain Text Parser - v1.0.1
 //! - Expects octet slice as input (source) data
 //! - Keeps tracks of `offset`, `column`, and `line` numbers for easy debugging
 
@@ -10,6 +10,32 @@ const testing = std.testing;
 const Error = error { UnexpectedEOF, InvalidOffsetRange, UnexpectedCharacter };
 
 const Info = struct { size: usize, offset: usize, column: usize, line: usize };
+
+pub const SpecialChar = struct {
+    /// # Space Character
+    /// Also known as white space, used to separate tokens or fields.
+    const SP = 0x20;
+
+    /// # Line Feed
+    /// `\n` - Also known as new line. used to separate tokens or fields.
+    const LF = 0x0A;
+
+    /// # Carriage Return
+    /// `\r` - Moves the cursor to the beginning of the current line.
+    const CR = 0x0D;
+
+    /// # Horizontal Tab
+    /// `\t` - Moves the cursor to the next tab stop, often every 4 or 8 SPs.
+    const HT = 0x09;
+
+    /// # Vertical Tab
+    /// It's rarely used and often ignored or treated as whitespace.
+    const VT = 0x0B;
+
+    /// # Form Feed
+    /// It's rarely used and often ignored or treated as whitespace.
+    const FF = 0x0C;
+};
 
 const Self = @This();
 
@@ -58,7 +84,7 @@ pub fn next(self: *Self) !u8 {
 /// Updates the internal parser state and returns consumed value
 fn consume(self: *Self) u8 {
     const char = self.src[self.offset];
-    if (char == '\n') { self.line += 1; self.column = 0; }
+    if (char == SpecialChar.LF) { self.line += 1; self.column = 0; }
     else self.column += 1;
     self.offset += 1;
 
@@ -112,8 +138,12 @@ pub fn eatSp(self: *Self) bool {
     var ws = false;
     while (self.peek()) |char| {
         switch (char) {
-            // [0x0B] VT character, [0x0C] FF character
-            ' ', '\t', '\n', '\r', 0x0B, 0x0C => {
+            SpecialChar.SP,
+            SpecialChar.HT,
+            SpecialChar.LF,
+            SpecialChar.CR,
+            SpecialChar.VT,
+            SpecialChar.FF => {
                 _ = self.consume();
                 ws = true;
             },
