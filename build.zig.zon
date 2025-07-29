@@ -1,6 +1,6 @@
 .{
     .name = .cfp,
-    .version = "0.5.0",
+    .version = "1.0.0",
     .fingerprint = 0xd672117621e43fe7,
     .minimum_zig_version = "0.15.0-dev.337+4e700fdf8",
     .dependencies = .{},
