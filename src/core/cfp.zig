@@ -274,23 +274,24 @@ const SourceContent = struct {
     const Keyword = union(enum) { section: Str, property: Str };
 
     fn parse(heap: Allocator, p: *Parser) ![]Section {
-        var sections = ArrayList(Section).init(heap);
+        var sections = ArrayList(Section){};
         errdefer {
             for (sections.items) |*sec| free(heap, sec);
-            sections.deinit();
+            sections.deinit(heap);
         }
 
         try Comments.skip(p); // Skips any top-level comments
         while(p.peek() != null and !p.eat('}')) {
             switch (try keyword(p)) {
                 .section => |key| {
-                    try sections.append(try SourceContent.nested(heap, p, key));
+                    const child = try SourceContent.nested(heap, p, key);
+                    try sections.append(heap, child);
                 },
                 .property => return Error.InvalidFormat
             }
         }
 
-        return try sections.toOwnedSlice();
+        return try sections.toOwnedSlice(heap);
     }
 
     fn keyword(p: *Parser) !Keyword {
@@ -313,30 +314,31 @@ const SourceContent = struct {
     }
 
     fn nested(heap: Allocator, p: *Parser, name: Str) !Section {
-        var sections = ArrayList(Section).init(heap);
+        var sections = ArrayList(Section){};
         errdefer {
             for (sections.items) |*sec| free(heap, sec);
-            sections.deinit();
+            sections.deinit(heap);
         }
 
         try Comments.skip(p);
         while(p.peek() != null and !p.eat('}')) {
             switch (try keyword(p)) {
                 .section => |key| {
-                    try sections.append(try SourceContent.nested(heap, p, key));
+                    const child = try SourceContent.nested(heap, p, key);
+                    try sections.append(heap, child);
                 },
                 .property => |key| {
-                    var items = ArrayList(Item).init(heap);
+                    var items = ArrayList(Item){};
                     try SourceContent.flat(heap, p, &items, key);
-                    const data = Data { .flat = try items.toOwnedSlice() };
-                    return Section { .name = name, .data = data };
+                    const data = Data {.flat = try items.toOwnedSlice(heap)};
+                    return Section {.name = name, .data = data};
                 }
             }
         }
 
         try Comments.skip(p);
-        const data = Data { .nested = try sections.toOwnedSlice() };
-        return Section { .name = name, .data = data };
+        const data = Data {.nested = try sections.toOwnedSlice(heap)};
+        return Section {.name = name, .data = data};
     }
 
     fn flat(
@@ -345,7 +347,7 @@ const SourceContent = struct {
         items: *ArrayList(Item),
         name: Str
     ) !void {
-        try items.append(try Property.getItem(heap, p, name));
+        try items.append(heap, try Property.getItem(heap, p, name));
         try Comments.skip(p);
 
         if (p.eat('}')) { try Comments.skip(p); return; }
@@ -367,7 +369,8 @@ const Property = struct {
                     const token_list = try tokenStr(p, ']');
                     var tokens = mem.tokenizeScalar(u8, token_list, ',');
 
-                    var value_list = ArrayList(Value).init(heap);
+                    var value_list = ArrayList(Value){};
+                    errdefer value_list.deinit(heap);
 
                     while(tokens.peek() != null) {
                         const token = tokens.next().?;
@@ -378,18 +381,18 @@ const Property = struct {
                                     return Error.InvalidToken;
                                 }
                                 const str = mem.trim(u8, data, "\"");
-                                try value_list.append(string(str));
+                                try value_list.append(heap, string(str));
                             },
                             't', 'f' => {
-                                try value_list.append(try boolean(data));
+                                try value_list.append(heap, try boolean(data));
                             },
                             else => {
-                                try value_list.append(try number(data));
+                                try value_list.append(heap, try number(data));
                             }
                         }
                     }
 
-                    return listItem(key, try value_list.toOwnedSlice());
+                    return listItem(key, try value_list.toOwnedSlice(heap));
                 },
                 '"' => {
                     _ = try p.next();
