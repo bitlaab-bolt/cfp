@@ -26,6 +26,9 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 simplifying the `loadFile()` in utils.zig
 
+### Changed
+- `max_size` params from `loadFile()`
+
 ## [v1.1.0] - 2025-09-13
 
 Minor code changes required for Zig v0.15.1 breaking changes.
