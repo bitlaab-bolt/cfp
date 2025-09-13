@@ -61,9 +61,7 @@ pub const Option = struct { env: ?u8 = null, abs_path: Str };
 pub fn init(heap: Allocator, opt: Option) !void {
     if (Self.so != null) @panic("Initialize Only Once Per Process!");
 
-    const max_size = 1024 * 1024 * 1; // 1 MB
-    const src_data = try utils.loadFile(heap, opt.abs_path, max_size);
-
+    const src_data = try utils.loadFile(heap, opt.abs_path);
     var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
         const info = p.info();

@@ -1,6 +1,7 @@
 //! # Utility Module
 
 const std = @import("std");
+const Io = std.Io;
 const fs = std.fs;
 const mem = std.mem;
 const debug = std.debug;
@@ -11,31 +12,25 @@ const SrcLoc = std.builtin.SourceLocation;
 const Str = []const u8;
 
 /// # Loads File Content
-/// **WARNING:** Return value must be freed by the caller.
 /// - `path` - An absolute file path (e.g., `/users/john/demo.txt`).
-/// - `max_size` - Maximum file size in bytes for the IO buffered reader
-pub fn loadFile(heap: Allocator, path: Str, max_size: usize) !Str {
-    return loadFileZ(heap, path, max_size) catch |err| {
-        if (mem.eql(u8, @errorName(err), "StreamTooLong")) {
-            const fmt_str = "{s} exceeds the max size of {d}KB";
-            log(.err, fmt_str, .{path, max_size / 1024}, @src());
-        } else {
-            const fmt_str = "File system error on: {s}";
-            log(.err, fmt_str, .{path}, @src());
-        }
-
+///
+/// **WARNING:** Return value must be freed by the caller.
+pub fn loadFile(heap: Allocator, path: Str) !Str {
+    return loadFileZ(heap, path) catch |err| {
+        const fmt_str = "File system error on: {s}";
+        log(.err, fmt_str, .{path}, @src());
         return err;
     };
 }
 
-fn loadFileZ(heap: Allocator, path: Str, max_size: usize) !Str {
-    var file = try std.fs.cwd().openFile(path, .{});
+fn loadFileZ(heap: Allocator, path: Str) !Str {
+    var file = try fs.cwd().openFile(path, .{});
     defer file.close();
 
-    var buf_reader = std.io.bufferedReader(file.reader());
-    var input_stream = buf_reader.reader();
-
-    return try input_stream.readAllAlloc(heap, max_size);
+    const file_sz = try file.getEndPos();
+    const contents = try heap.alloc(u8, file_sz);
+    debug.assert(try file.readAll(contents) == file_sz);
+    return contents;
 }
 
 const Log = enum { info, warn, err };
