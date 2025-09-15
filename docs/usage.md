@@ -3,7 +3,7 @@
 First, import Cfp on your Zig source file.
 
 ```zig
-const cfp = @import("cfp").Cfp;
+const Cfp = @import("cfp").Cfp;
 ```
 
 Create an `app.conf` file on your projects root directory, then copy and paste the following code into it.
