@@ -3,19 +3,17 @@ const Allocator = std.mem.Allocator;
 
 const Cfp = @import("cfp").Cfp;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     std.debug.print("Code coverage examples!\n", .{});
 
     // Let's start from here...
 
-    var gpa_mem = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa_mem.deinit() == .ok);
-    const heap = gpa_mem.allocator();
+    const heap = init.gpa;
 
-    const path = try getUri(heap, "app.conf");
+    const path = try getUri(heap, init.io, "app.conf");
     defer heap.free(path);
 
-    try Cfp.init(heap, .{.abs_path = path});
+    try Cfp.init(init.io, heap, .{.abs_path = path});
     defer Cfp.deinit();
 
     // Extracts integer into the given integer type
@@ -50,9 +48,9 @@ pub fn main() !void {
     std.debug.print("Well done!\n", .{});
 }
 
-/// **Remarks:** Return value must be freed by the caller.
-fn getUri(heap: Allocator, child: []const u8) ![]const u8 {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(heap);
+/// **WARNING:** Return value must be freed by the caller.
+fn getUri(heap: Allocator, io: std.Io, child: []const u8) ![]const u8 {
+    const exe_dir = try std.process.executableDirPathAlloc(io, heap);
     defer heap.free(exe_dir);
 
     if (std.mem.count(u8, exe_dir, "zig-out/bin") == 1) {

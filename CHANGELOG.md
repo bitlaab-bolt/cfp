@@ -23,6 +23,9 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.3.0] - 2026-10-06
+
+
 ## [v1.2.1] - 2025-09-15
 
 Better code examples and documentation.

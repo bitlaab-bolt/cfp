@@ -21,6 +21,7 @@
 //! See `test` code at the end for writing custom configurations for a new app.
 
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const ascii = std.ascii;
 const testing = std.testing;
@@ -58,10 +59,10 @@ pub const Option = struct { env: ?u8 = null, abs_path: Str };
 /// # Initializes a Singleton
 /// - `opt.env` - An optional environment identifier `Dev`, `Prod` etc.
 /// - `opt.abs_path` - An absolute app configuration file path
-pub fn init(heap: Allocator, opt: Option) !void {
+pub fn init(io: Io, heap: Allocator, opt: Option) !void {
     if (Self.so != null) @panic("Initialize Only Once Per Process!");
 
-    const src_data = try utils.loadFile(heap, opt.abs_path);
+    const src_data = try utils.loadFile(io, heap, opt.abs_path);
     var p = Parser.init(src_data);
     const data = SourceContent.parse(heap, &p) catch |err| {
         const info = p.info();
@@ -272,7 +273,7 @@ const SourceContent = struct {
     const Keyword = union(enum) { section: Str, property: Str };
 
     fn parse(heap: Allocator, p: *Parser) ![]Section {
-        var sections = ArrayList(Section){};
+        var sections: ArrayList(Section) = .empty;
         errdefer {
             for (sections.items) |*sec| free(heap, sec);
             sections.deinit(heap);
@@ -312,7 +313,7 @@ const SourceContent = struct {
     }
 
     fn nested(heap: Allocator, p: *Parser, name: Str) !Section {
-        var sections = ArrayList(Section){};
+        var sections: ArrayList(Section) = .empty;
         errdefer {
             for (sections.items) |*sec| free(heap, sec);
             sections.deinit(heap);
@@ -326,7 +327,7 @@ const SourceContent = struct {
                     try sections.append(heap, child);
                 },
                 .property => |key| {
-                    var items = ArrayList(Item){};
+                    var items: ArrayList(Item) = .empty;
                     try SourceContent.flat(heap, p, &items, key);
                     const data = Data {.flat = try items.toOwnedSlice(heap)};
                     return Section {.name = name, .data = data};
@@ -367,7 +368,7 @@ const Property = struct {
                     const token_list = try tokenStr(p, ']');
                     var tokens = mem.tokenizeScalar(u8, token_list, ',');
 
-                    var value_list = ArrayList(Value){};
+                    var value_list: ArrayList(Value) = .empty;
                     errdefer value_list.deinit(heap);
 
                     while(tokens.peek() != null) {

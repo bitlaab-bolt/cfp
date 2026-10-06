@@ -6,12 +6,12 @@ Cfp is a drop-in replacement for configuration format such as `.ini`, `.json`, `
 
 ## Platform Support
 
-Cfp has cross-platform support.
+Fully cross-platform.
 
 ## Dependency
 
-Cfp has no external dependencies.
+No external dependencies.
 
 ## Documentation
 
-For most up-to-date documentation see - [**Cfp Documentation**](https://bitlaabcfp.web.app/).
+For most up-to-date documentation see - [**Cfp Documentation**](https://bitlaab.com/api-doc?pkg=cfp).

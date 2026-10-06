@@ -15,21 +15,21 @@ const Str = []const u8;
 /// - `path` - An absolute file path (e.g., `/users/john/demo.txt`).
 ///
 /// **WARNING:** Return value must be freed by the caller.
-pub fn loadFile(heap: Allocator, path: Str) !Str {
-    return loadFileZ(heap, path) catch |err| {
+pub fn loadFile(io: Io, heap: Allocator, path: Str) !Str {
+    return loadFileZ(io, heap, path) catch |err| {
         const fmt_str = "File system error on: {s}";
         log(.err, fmt_str, .{path}, @src());
         return err;
     };
 }
 
-fn loadFileZ(heap: Allocator, path: Str) !Str {
-    var file = try fs.cwd().openFile(path, .{});
-    defer file.close();
+fn loadFileZ(io: Io, heap: Allocator, path: Str) !Str {
+    var file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
 
-    const file_sz = try file.getEndPos();
+    const file_sz = try file.length(io);
     const contents = try heap.alloc(u8, file_sz);
-    debug.assert(try file.readAll(contents) == file_sz);
+    debug.assert(try file.readPositionalAll(io, contents, 0) == file_sz);
     return contents;
 }
 
