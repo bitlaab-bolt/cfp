@@ -87,6 +87,7 @@ pub fn deinit() void {
 
     sop.heap.free(sop.secs);
     sop.heap.free(sop.src);
+    so = null;
 }
 
 /// # Internal Static Object
@@ -132,8 +133,9 @@ pub fn getInt(comptime T: type, query: Str) !T {
     }
 
     const v = try getValue(query);
-    return if (@as(Value, v) == Value.number) @as(T, @intCast(v.number))
-    else Error.UnexpectedDataType;
+    if (@as(Value, v) != Value.number) return Error.UnexpectedDataType;
+
+    return std.math.cast(T, v.number) orelse Error.UnexpectedDataType;
 }
 
 /// # Returns a Boolean Value
@@ -152,7 +154,7 @@ pub fn getStr(query: Str) !Str {
 
 /// # Extracts Pair Value
 pub fn getValue(query: Str) !Value {
-    const offset = tailIndex(query);
+    const offset = try tailIndex(query);
     if (getProperties(query[0..offset])) |items| {
         for(items) |item| {
             if (@as(Item, item) == Item.pair
@@ -167,7 +169,7 @@ pub fn getValue(query: Str) !Value {
 
 /// # Extracts List Values
 pub fn getList(query: Str) ![]Value {
-    const offset = tailIndex(query);
+    const offset = try tailIndex(query);
     if (getProperties(query[0..offset])) |items| {
         for(items) |item| {
             if (@as(Item, item) == Item.list
@@ -181,7 +183,7 @@ pub fn getList(query: Str) ![]Value {
 }
 
 /// # Returns the Last Token Offset
-fn tailIndex(query: Str) usize {
+fn tailIndex(query: Str) Error!usize {
     var count: usize = 0;
     var keys = mem.tokenizeScalar(u8, query, '.');
 
@@ -190,6 +192,7 @@ fn tailIndex(query: Str) usize {
         count += key.len + 1;
     }
 
+    if (count == 0) return Error.InvalidQuery;
     return count - 1;
 }
 
@@ -280,7 +283,10 @@ const SourceContent = struct {
         }
 
         try Comments.skip(p); // Skips any top-level comments
-        while(p.peek() != null and !p.eat('}')) {
+        while(p.peek() != null) {
+            // No section open to close
+            if (p.eat('}')) return Error.InvalidFormat;
+
             switch (try keyword(p)) {
                 .section => |key| {
                     const child = try SourceContent.nested(heap, p, key);
@@ -320,7 +326,13 @@ const SourceContent = struct {
         }
 
         try Comments.skip(p);
-        while(p.peek() != null and !p.eat('}')) {
+        while(p.peek() != null) {
+            if (p.eat('}')) {
+                try Comments.skip(p);
+                const data = Data {.nested = try sections.toOwnedSlice(heap)};
+                return Section {.name = name, .data = data};
+            }
+
             switch (try keyword(p)) {
                 .section => |key| {
                     const child = try SourceContent.nested(heap, p, key);
@@ -328,6 +340,13 @@ const SourceContent = struct {
                 },
                 .property => |key| {
                     var items: ArrayList(Item) = .empty;
+                    errdefer {
+                        for (items.items) |*item| {
+                            if (item.* == .list) heap.free(item.list.values);
+                        }
+                        items.deinit(heap);
+                    }
+
                     try SourceContent.flat(heap, p, &items, key);
                     const data = Data {.flat = try items.toOwnedSlice(heap)};
                     return Section {.name = name, .data = data};
@@ -335,9 +354,7 @@ const SourceContent = struct {
             }
         }
 
-        try Comments.skip(p);
-        const data = Data {.nested = try sections.toOwnedSlice(heap)};
-        return Section {.name = name, .data = data};
+        return Error.UnexpectedEOF; // Missing closing `}`
     }
 
     fn flat(
@@ -374,6 +391,9 @@ const Property = struct {
                     while(tokens.peek() != null) {
                         const token = tokens.next().?;
                         const data = mem.trim(u8, token, &ascii.whitespace);
+
+                        if (data.len == 0) return Error.InvalidToken;
+
                         switch (data[0]) {
                             '"' => {
                                 if (!mem.endsWith(u8, data, "\"")) {
@@ -399,11 +419,11 @@ const Property = struct {
                     return pairItem(key, string(token));
                 },
                 't', 'f' => {
-                    const token = try sanitize(try tokenStr(p, '\n'));
+                    const token = try sanitize(try bareStr(p));
                     return pairItem(key, try boolean(token));
                 },
                 else => {
-                    const token = try sanitize(try tokenStr(p, '\n'));
+                    const token = try sanitize(try bareStr(p));
                     return pairItem(key, try number(token));
                 }
             }
@@ -418,6 +438,19 @@ const Property = struct {
         const end = p.cursor() - 1;
 
         return try p.peekStr(begin, end);
+    }
+
+    /// # Bare Value Token
+    /// - Reads until a newline, inline comment `#`, closing brace `}`,
+    ///   or end of source. Unlike `tokenStr()`, it never fails at EOF.
+    fn bareStr(p: *Parser) !Str {
+        const begin = p.cursor();
+        while (p.peek()) |char| {
+            if (char == '\n' or char == '#' or char == '}') break;
+            _ = try p.next();
+        }
+
+        return try p.peekStr(begin, p.cursor());
     }
 
     fn listItem(key: Str, value: []Value) Item {
@@ -469,6 +502,7 @@ fn sanitize(token: Str) !Str {
 
 /// # Keyword Characters
 fn validate(keyword: Str) !Str {
+    if (keyword.len == 0) return Error.InvalidKeyword;
     for (keyword) |char| {
         if (ascii.isAlphanumeric(char) or char == '_') continue
         else return Error.InvalidKeyword;
@@ -548,4 +582,107 @@ test "App Config Demo" {
     try testing.expectEqual(100, nested_items[0].number);
     try testing.expectEqual(true, nested_items[1].boolean);
     try testing.expect(mem.eql(u8, "hello", nested_items[2].string));
+}
+
+test "MalformedInputs" {
+    const expectError = testing.expectError;
+    const heap = testing.allocator;
+
+    // Truncated section must fail instead of silently parsing
+    {
+        const src_data = try heap.dupe(u8, "global { prop = 100");
+        errdefer heap.free(src_data);
+
+        var p = Parser.init(src_data);
+        try expectError(Error.UnexpectedEOF, SourceContent.parse(heap, &p));
+        heap.free(src_data);
+    }
+
+    // Empty list element must be rejected, not crash
+    {
+        const src_data = try heap.dupe(u8, "global { prop = [ , 100] }");
+        errdefer heap.free(src_data);
+
+        var p = Parser.init(src_data);
+        try expectError(Error.InvalidToken, SourceContent.parse(heap, &p));
+        heap.free(src_data);
+    }
+
+    // Stray closing brace at top level
+    {
+        const src_data = try heap.dupe(u8, "} global { prop = 100 }");
+        errdefer heap.free(src_data);
+
+        var p = Parser.init(src_data);
+        try expectError(Error.InvalidFormat, SourceContent.parse(heap, &p));
+        heap.free(src_data);
+    }
+
+    // A failed parse after a successful list item must not leak
+    {
+        const src_data = try heap.dupe(u8, "global { prop = [1, 2]\nbroken = \"unclosed");
+        errdefer heap.free(src_data);
+
+        var p = Parser.init(src_data);
+        try expectError(Error.UnexpectedEOF, SourceContent.parse(heap, &p));
+        heap.free(src_data);
+    }
+}
+
+test "BareValuesCommentsAndQueries" {
+    const expectError = testing.expectError;
+    const expectEqual = testing.expectEqual;
+    const heap = testing.allocator;
+
+    const src =
+        \\global {
+        \\    prop_1 = 100 # inline comment
+        \\    big = 300
+        \\    neg = -5
+        \\    prop_2 = true
+        \\}
+    ;
+    // Note: no trailing newline and `}` shares the line - must still parse
+
+    const src_data = try heap.dupe(u8, src);
+    var p = Parser.init(src_data);
+
+    const data = SourceContent.parse(heap, &p) catch |err| {
+        heap.free(src_data);
+        return err;
+    };
+
+    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
+    defer Self.deinit();
+
+    try expectEqual(@as(u8, 100), try getInt(u8, "global.prop_1"));
+    try expectEqual(@as(i16, -5), try getInt(i16, "global.neg"));
+    try testing.expect(try getBool("global.prop_2"));
+
+    // Out-of-range integers must error instead of panicking
+    try expectError(Error.UnexpectedDataType, getInt(u8, "global.big"));
+    try expectError(Error.UnexpectedDataType, getInt(u8, "global.neg"));
+
+    // Malformed queries must return errors, not crash
+    try expectError(Error.InvalidQuery, getValue("global"));
+    try expectError(Error.InvalidQuery, getValue("global."));
+    try expectError(Error.InvalidQuery, getValue("global.prop.extra"));
+    try expectError(Error.InvalidQuery, getValue(""));
+}
+
+test "DeinitResetsSingleton" {
+    const heap = testing.allocator;
+
+    const src_data = try heap.dupe(u8, "global { prop = 100 }");
+    var p = Parser.init(src_data);
+
+    const data = SourceContent.parse(heap, &p) catch |err| {
+        heap.free(src_data);
+        return err;
+    };
+
+    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
+    Self.deinit();
+
+    try testing.expect(Self.so == null);
 }

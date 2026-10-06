@@ -43,6 +43,6 @@ pub fn log(kind: Log, comptime format: Str, args: anytype, src: SrcLoc) void {
         .warn => std.log.warn(format, args),
         .err => std.log.err(format, args)
     }
-    const fmt_str = "source: {s} at {d}:{d}\n";
+    const fmt_str = "Source: {s} at {d}:{d}\n";
     debug.print(fmt_str, .{src.file, src.line, src.column});
 }
