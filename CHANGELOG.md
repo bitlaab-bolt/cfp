@@ -25,6 +25,11 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.3.0] - 2026-10-06
 
+Internal code refactoring, better documentation and Zig-0.17.0 version support.
+
+### Changed
+
+- `Cfp.init()` now takes additional `Io` as argument.
 
 ## [v1.2.1] - 2025-09-15
 

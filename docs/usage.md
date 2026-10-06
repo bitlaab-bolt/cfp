@@ -1,33 +1,44 @@
 # How to use
 
+Cfp parses a custom `.conf` file into an in-memory tree and exposes it through a
+process-wide singleton. Configuration is read with typed getters that use `.`
+notation to address any section or property at any depth.
+
 First, import Cfp on your Zig source file.
 
 ```zig
 const Cfp = @import("cfp").Cfp;
 ```
 
-Create an `app.conf` file on your projects root directory, then copy and paste the following code into it.
+## The configuration file
 
-```conf
-# Flat section
+Create an `app.conf` file in your project's root directory. The following
+snippet demonstrates every supported node and data type.
 
+```conf title="app.conf"
+# Flat section: contains only properties
 global {
-    prop_1 = 100
-    prop_2 = true
-    prop_3 = "hello"
-    prop_4 = [100, true, "hello"]
+    name = "cfp-demo"
+    port = 8080                        # inline comments work after bare values
+    verbose = true
+    build_number = -7                  # numbers are signed (`isize`)
+    tags = ["core", "net", 42, true]   # lists may mix every scalar type
 }
 
-# Nested sections
-
+# Nested section: sections containing other sections only
 project {
-    one { one { prop = "hello" } }
-    two {
-        prop = [100, true, "hello"]
-        foo = "bar"
+    web {
+        host_name = "example.com"
+        shared_object = "../proj-1/zig-out/lib/lib-proj-1.so"
+    }
+
+    workers {
+        count = 8
+        names = ["alice", "bob", "carol"]
     }
 }
 
+# Runtime-known sections, enumerated with Cfp.getSections()
 applet {
     proj_1 {
         host_name = "example.com"
@@ -36,52 +47,58 @@ applet {
 }
 ```
 
-## Syntax and Definitions
-
-The above configuration snippet highlights a barebones config structure along with all supported node and data types.
+### Syntax and Definitions
 
 **Node Types**
 
-- `comment` - single line comment ending with `\n`
-- `section` - contains arbitrary number of nested sections or properties
-- `property` - contains arbitrary number of `<key> = <value> | <value list>`
+- `comment` - starts with `#` and ends at the newline; allowed on its own line or after a value
+- `section` - contains an arbitrary number of nested sections or properties
+- `property` - contains an arbitrary number of `<key> = <value>` or `<key> = <value list>` lines
 
-**Remarks:** `property` can only be used within a section. Any top level property will cause the parser to fail with the **InvalidFormat** error.
+**Remarks:** `property` can only be used within a section. Any top level
+property will cause the parser to fail with the **InvalidFormat** error.
 
 **Data Types**
 
-- `string` - value of `Str`
+- `string` - value of `Str` (quoted)
 - `boolean` - value of `true | false`
 - `number` - a signed integer of `isize`
-- `list` - any number of `,` separated `[<value 1>,...<value N>]`
+- `list` - any number of `,` separated values `[<value 1>,...<value N>]`
 
-**Remarks** `list` can contain any combination of above scaler types.
+**Remarks:** `list` can contain any combination of the above scalar types.
 
 **Flat vs Nested Section**
 
-A section with only property nodes is called a flat section, on the other hand a section with only section nodes is called a nested section.
+A section containing only properties is a *flat* section; a section containing
+only sections is a *nested* section. Sections never mix the two.
 
-## Limitation
-
-As of now, a section with mixed sections as below will result to a recursive panic with segmentation fault.
-
-```conf title="app.conf"
+```conf
 settings {
-    prop_1 = 100
-    prop_2 {
-        prop_3 = "hello"
+    prop_1 = 100        # flat part ...
+    props {             # ... followed by a nested section: InvalidFormat!
+        prop_2 = "oops"
     }
 }
 ```
 
-## Code Example
+**Limitations**
 
-Copy and paste the following function into your `main.zig` file.
+- A section may not mix properties and sections; the parser fails with
+  **InvalidFormat**.
+- Keywords may only contain alphanumerics and `_`; anything else fails with
+  **InvalidKeyword**.
+- Inline comments are supported after bare values; a `#` inside a quoted
+  string is fine, but not inside a list token.
+
+## Initialize the singleton
+
+Copy the following helper into your `main.zig`; it resolves `app.conf`
+relative to the executable so that `zig build run` works out of the box.
 
 ```zig
-/// **Remarks:** Return value must be freed by the caller.
-fn getUri(heap: Allocator, child: []const u8) ![]const u8 {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(heap);
+/// **WARNING:** Return value must be freed by the caller.
+fn getUri(heap: Allocator, io: std.Io, child: []const u8) ![]const u8 {
+    const exe_dir = try std.process.executableDirPathAlloc(io, heap);
     defer heap.free(exe_dir);
 
     if (std.mem.count(u8, exe_dir, "zig-out/bin") == 1) {
@@ -93,53 +110,95 @@ fn getUri(heap: Allocator, child: []const u8) ![]const u8 {
 }
 ```
 
-The following code example demonstrates how to access configuration data at runtime. Cfp uses `.` notation to access nested sections and properties at any level.
-
-Copy and paste the following code into your `main` function.
+`init` takes an optional environment identifier (stored as a raw `u8`) and the
+absolute config path. Calling `init` twice without `deinit` in between panics.
 
 ```zig
-var gpa_mem = std.heap.DebugAllocator(.{}).init;
-defer std.debug.assert(gpa_mem.deinit() == .ok);
-const heap = gpa_mem.allocator();
+const Env = enum(u8) { dev = 1, stage = 2, prod = 3 };
 
-const path = try getUri(heap, "app.conf");
-defer heap.free(path);
-
-try Cfp.init(heap, .{.abs_path = path});
+try Cfp.init(init.io, init.gpa, .{
+    .env = @intFromEnum(Env.dev),
+    .abs_path = path,
+});
 defer Cfp.deinit();
-
-// Extracts integer into the given integer type
-std.debug.assert(try Cfp.getInt(u8, "global.prop_1") == 100);
-std.debug.assert(try Cfp.getInt(u32, "global.prop_1") == 100);
-std.debug.assert(try Cfp.getInt(isize, "global.prop_1") == 100);
-std.debug.assert(try Cfp.getInt(usize, "global.prop_1") == 100);
-
-// Extracts boolean value
-std.debug.assert(try Cfp.getBool("global.prop_2") == true);
-
-// Extracts string slice
-const data = try Cfp.getStr("global.prop_3");
-std.debug.assert(std.mem.eql(u8, "hello", data));
-
-// Extracts List Values
-const items = try Cfp.getList("global.prop_4");
-std.debug.assert(items[0].number == 100);
-std.debug.assert(items[1].boolean == true);
-std.debug.assert(std.mem.eql(u8, "hello", items[2].string));
-
-// Extracts string slice from a nested section
-const data2 = try Cfp.getStr("project.one.one.prop");
-std.debug.assert(std.mem.eql(u8, "hello", data2));
-
-// Extracts List Values
-const nested_items = try Cfp.getList("project.two.prop");
-std.debug.assert(nested_items[0].number == 100);
-std.debug.assert(nested_items[1].boolean == true);
-std.debug.assert(std.mem.eql(u8, "hello", nested_items[2].string));
-
-std.debug.print("Well done!\n", .{});
 ```
 
-**Remarks:** You can also pass an `env` value and an absolute path for more complex setup when calling `Cfp.init()`.
+**Remarks:** After `Cfp.deinit()` all slices previously returned by the getters
+are invalid. A fresh `Cfp.init()` is allowed afterwards.
 
-For dynamic and runtime known configuration make sure to checkout `Cfp.getProperties()` and `Cfp.getSections()` at [API Reference](/reference).
+## Read values
+
+Queries use `.` notation for any nesting depth, e.g. `project.web.host_name`.
+Every getter returns an error union; wrong types and unknown paths are
+reported as errors instead of panicking.
+
+```zig
+// Integers convert into any integer type
+const port = try Cfp.getInt(u16, "global.port");        // 8080
+const build = try Cfp.getInt(isize, "global.build_number"); // -7
+
+// Booleans and strings
+const verbose = try Cfp.getBool("global.verbose");
+const name = try Cfp.getStr("global.name");
+
+// Lists may mix scalar types; switch on each `Value`
+const tags = try Cfp.getList("global.tags");
+for (tags, 0..) |value, i| {
+    switch (value) {
+        .number => |n| std.debug.print("{d}\n", .{n}),
+        .boolean => |b| std.debug.print("{}\n", .{b}),
+        .string => |s| std.debug.print("{s}\n", .{s}),
+    }
+}
+
+// Dot notation reaches any depth
+const host = try Cfp.getStr("project.web.host_name");
+```
+
+## Runtime-known data
+
+When section or property names are only known at runtime, use
+`getSections()` and `getProperties()`:
+
+- `Cfp.getSections(query)` - returns the child sections of the given path
+- `Cfp.getProperties(query)` - returns the properties of the addressed
+  (flat) section
+
+Both accept the same `.` queries as the typed getters and return `null` when
+the path does not resolve.
+
+```zig
+// Enumerate sections and query each one dynamically
+if (Cfp.getSections("applet")) |applets| {
+    for (applets) |app| {
+        const query = try std.fmt.allocPrint(
+            heap, "applet.{s}.host_name", .{app.name}
+        );
+        defer heap.free(query);
+
+        std.debug.print("{s} -> {s}\n", .{app.name, try Cfp.getStr(query)});
+    }
+}
+```
+
+## Error handling
+
+All getters return Zig errors, so failures compose with ordinary `try` and
+`catch`. The error set is inferred; match on the names below via
+`@errorName(err)`.
+
+| Error                | Raised when                                            |
+| -------------------- | ------------------------------------------------------ |
+| `InvalidQuery`       | The query path does not resolve to a property          |
+| `UnexpectedDataType` | The stored type differs, or an integer does not fit `T` |
+| `InvalidFormat`      | Structural problem (top level property, missing `}`)   |
+| `UnexpectedEOF`      | The file ends mid-token or an unclosed section          |
+| `InvalidToken`       | A value token is malformed (e.g. `trueX`, empty list slot) |
+| `InvalidKeyword`     | A section/property name has illegal characters         |
+
+Parse failures are logged with the offending `line:column` and a source trace,
+then returned to the caller:
+
+```zig
+try Cfp.init(init.io, heap, .{.abs_path = path}); // or `catch` and recover
+```
