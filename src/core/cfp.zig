@@ -27,6 +27,7 @@ const ascii = std.ascii;
 const testing = std.testing;
 const ArrayList = std.ArrayList;
 const Allocator = mem.Allocator;
+const StringHashMap = std.StringHashMap;
 
 const utils = @import("./utils.zig");
 const Parser = @import("./parser.zig");
@@ -40,7 +41,21 @@ const Error = error {
     InvalidFormat,
     UnexpectedEOF,
     InvalidKeyword,
+    UnexpectedDataType
+};
+
+const ParseError = error {
+    InvalidQuery,
+    InvalidToken,
+    InvalidFormat,
+    UnexpectedEOF,
+    InvalidKeyword,
     UnexpectedDataType,
+    InvalidOffsetRange,
+    UnexpectedCharacter,
+    Overflow,
+    InvalidCharacter,
+    OutOfMemory
 };
 
 const SingletonObject = struct {
@@ -48,7 +63,125 @@ const SingletonObject = struct {
     env: ?u8,
     src: Str,
     secs: []Section,
+    sections: StringHashMap(*Section),
+    pairs: StringHashMap(*Pair),
+    lists: StringHashMap(*List)
 };
+
+const Index = struct {
+    sections: StringHashMap(*Section),
+    pairs: StringHashMap(*Pair),
+    lists: StringHashMap(*List)
+};
+
+fn buildIndex(heap: Allocator, secs: []Section) !Index {
+    var index = Index {
+        .sections = StringHashMap(*Section).init(heap),
+        .pairs = StringHashMap(*Pair).init(heap),
+        .lists = StringHashMap(*List).init(heap)
+    };
+    errdefer freeIndex(heap, &index.sections, &index.pairs, &index.lists);
+
+    try indexSections(heap, secs, "", &index);
+    return index;
+}
+
+fn indexSections(
+    heap: Allocator,
+    secs: []Section,
+    prefix: Str,
+    index: *Index
+) !void {
+    for (secs) |*section| {
+        const section_path = try pathName(heap, prefix, section.name);
+        const section_is_new = index.sections.get(section_path) == null;
+        if (section_is_new) {
+            index.sections.put(section_path, section) catch |err| {
+                heap.free(section_path);
+                return err;
+            };
+        }
+        defer if (!section_is_new) heap.free(section_path);
+
+        switch (section.data) {
+            .flat => |items| {
+                for (items) |*item| {
+                    const item_path = try pathName(heap, section_path, switch (item.*) {
+                        .pair => |pair| pair.name,
+                        .list => |list| list.name
+                    });
+
+                    // Pairs and lists are indexed separately so a query
+                    // resolves by both path and kind, matching a config that
+                    // reuses the same name for a pair and a list.
+                    const known = switch (item.*) {
+                        .pair => |*pair| index.pairs.get(item_path) != null or
+                            blk: { index.pairs.put(item_path, pair) catch |err| {
+                                heap.free(item_path);
+                                return err;
+                            }; break :blk false; },
+                        .list => |*list| index.lists.get(item_path) != null or
+                            blk: { index.lists.put(item_path, list) catch |err| {
+                                heap.free(item_path);
+                                return err;
+                            }; break :blk false; },
+                    };
+                    if (known) heap.free(item_path);
+                }
+            },
+            .nested => |children| try indexSections(
+                heap, children, section_path, index
+            )
+        }
+    }
+}
+
+fn pathName(heap: Allocator, prefix: Str, name: Str) !Str {
+    if (prefix.len == 0) return heap.dupe(u8, name);
+    return std.fmt.allocPrint(heap, "{s}.{s}", .{prefix, name});
+}
+
+fn freeIndex(
+    heap: Allocator,
+    sections: *StringHashMap(*Section),
+    pairs: *StringHashMap(*Pair),
+    lists: *StringHashMap(*List)
+) void {
+    var section_keys = sections.keyIterator();
+    while (section_keys.next()) |key| heap.free(key.*);
+    sections.deinit();
+
+    var pair_keys = pairs.keyIterator();
+    while (pair_keys.next()) |key| heap.free(key.*);
+    pairs.deinit();
+
+    var list_keys = lists.keyIterator();
+    while (list_keys.next()) |key| heap.free(key.*);
+    lists.deinit();
+}
+
+fn installSingleton(
+    heap: Allocator,
+    env: ?u8,
+    src: Str,
+    secs: []Section
+) !void {
+    const index = buildIndex(heap, secs) catch |err| {
+        for (secs) |*section| free(heap, section);
+        heap.free(secs);
+        return err;
+    };
+
+    Self.so = .{
+        .heap = heap,
+        .env = env,
+        .src = src,
+        .secs = secs,
+        .sections = index.sections,
+        .pairs = index.pairs,
+        .lists = index.lists,
+    };
+}
 
 var so: ?SingletonObject = null;
 
@@ -76,13 +209,17 @@ pub fn init(io: Io, heap: Allocator, opt: Option) !void {
         return err;
     };
 
-    Self.so = .{.heap = heap, .env = opt.env, .src = src_data, .secs = data};
+    installSingleton(heap, opt.env, src_data, data) catch |err| {
+        heap.free(src_data);
+        return err;
+    };
 }
 
 /// # Destroys the Singleton
 pub fn deinit() void {
     const sop = Self.iso();
 
+    freeIndex(sop.heap, &sop.sections, &sop.pairs, &sop.lists);
     for (sop.secs) |*sec| free(sop.heap, sec);
 
     sop.heap.free(sop.secs);
@@ -154,106 +291,36 @@ pub fn getStr(query: Str) !Str {
 
 /// # Extracts Pair Value
 pub fn getValue(query: Str) !Value {
-    const offset = try tailIndex(query);
-    if (getProperties(query[0..offset])) |items| {
-        for(items) |item| {
-            if (@as(Item, item) == Item.pair
-                and mem.eql(u8, item.pair.name, query[offset + 1..]))
-            {
-                return item.pair.value;
-            }
-        }
-    }
-    return Error.InvalidQuery;
+    const pair = iso().pairs.get(query) orelse return Error.InvalidQuery;
+    return pair.value;
 }
 
 /// # Extracts List Values
 pub fn getList(query: Str) ![]Value {
-    const offset = try tailIndex(query);
-    if (getProperties(query[0..offset])) |items| {
-        for(items) |item| {
-            if (@as(Item, item) == Item.list
-                and mem.eql(u8, item.list.name, query[offset + 1..]))
-            {
-                return item.list.values;
-            }
-        }
-    }
-    return Error.InvalidQuery;
-}
-
-/// # Returns the Last Token Offset
-fn tailIndex(query: Str) Error!usize {
-    var count: usize = 0;
-    var keys = mem.tokenizeScalar(u8, query, '.');
-
-    while(keys.next()) |key| {
-        if (keys.peek() == null) break;
-        count += key.len + 1;
-    }
-
-    if (count == 0) return Error.InvalidQuery;
-    return count - 1;
+    const list = iso().lists.get(query) orelse return Error.InvalidQuery;
+    return list.values;
 }
 
 /// # Extracts Flat Data Items
 /// **Remarks:** Use when properties are only known at runtime.
 /// e.g., `foo {...}` could have any number of user defined item.
 pub fn getProperties(query: Str) ?[]Item {
-    const sop = Self.iso();
-    var tmp: ?[]Section = null;
-    var keys = mem.tokenizeScalar(u8, query, '.');
-
-    while(keys.peek() != null) {
-        const key = keys.next().?;
-        const parent = tmp orelse sop.secs;
-        if (nested(parent, key)) |section| tmp = section
-        else {
-            if (keys.peek() == null) return flat(parent, key)
-            else break;
-        }
-    }
-
-    return null;
+    const section = iso().sections.get(query) orelse return null;
+    return switch (section.data) {
+        .flat => |items| items,
+        .nested => null
+    };
 }
 
 /// # Extracts Nested Data Sections
 /// **Remarks:** Use when sections are only known at runtime.
 /// e.g., `foo {...}` could have any number of user defined section.
 pub fn getSections(query: Str) ?[]Section {
-    const sop = Self.iso();
-    var tmp: ?[]Section = null;
-    var keys = mem.tokenizeScalar(u8, query, '.');
-
-    while(keys.peek() != null) {
-        const key = keys.next().?;
-        const parent = tmp orelse sop.secs;
-        if (nested(parent, key)) |section| tmp = section;
-    }
-
-    return tmp;
-}
-
-fn flat(parent: []Section, name: Str) ?[]Item {
-    for (parent) |section| {
-        const eql = mem.eql(u8, section.name, name);
-        if (eql and @as(Data, section.data) == Data.flat) {
-            return section.data.flat;
-        }
-    }
-
-    return null;
-}
-
-fn nested(parent: []Section, name: Str) ?[]Section {
-    for (parent) |section| {
-        const eql = mem.eql(u8, section.name, name);
-        if (eql and @as(Data, section.data) == Data.nested) {
-            return section.data.nested;
-        }
-    }
-
-    return null;
+    const section = iso().sections.get(query) orelse return null;
+    return switch (section.data) {
+        .nested => |sections| sections,
+        .flat => null
+    };
 }
 
 //##############################################################################
@@ -275,50 +342,19 @@ const Value = union(enum) { number: isize, boolean: bool, string: Str };
 const SourceContent = struct {
     const Keyword = union(enum) { section: Str, property: Str };
 
-    fn parse(heap: Allocator, p: *Parser) ![]Section {
-        var sections: ArrayList(Section) = .empty;
-        errdefer {
-            for (sections.items) |*sec| free(heap, sec);
-            sections.deinit(heap);
-        }
-
-        try Comments.skip(p); // Skips any top-level comments
-        while(p.peek() != null) {
-            // No section open to close
-            if (p.eat('}')) return Error.InvalidFormat;
-
-            switch (try keyword(p)) {
-                .section => |key| {
-                    const child = try SourceContent.nested(heap, p, key);
-                    try sections.append(heap, child);
-                },
-                .property => return Error.InvalidFormat
-            }
-        }
-
-        return try sections.toOwnedSlice(heap);
+    fn parse(heap: Allocator, p: *Parser) ParseError![]Section {
+        const data = try parseBody(heap, p, false);
+        return switch (data) {
+            .nested => |sections| sections,
+            .flat => Error.InvalidFormat
+        };
     }
 
-    fn keyword(p: *Parser) !Keyword {
-        defer _ = p.eatSp();
-
-        const token = try sanitize(try keywordStr(p));
-        const key = try validate(token);
-        const tail = try p.peekStr(p.cursor() - 1, p.cursor());
-
-        return if (mem.eql(u8, tail, "=")) Keyword { .property = key }
-        else Keyword { .section = key };
-    }
-
-    fn keywordStr(p: *Parser) !Str {
-        const begin = p.cursor();
-        while (!p.eat('{') and !p.eat('=')) { _ = try p.next(); }
-        const end = p.cursor() - 1;
-
-        return try p.peekStr(begin, end);
-    }
-
-    fn nested(heap: Allocator, p: *Parser, name: Str) !Section {
+    fn parseBody(
+        heap: Allocator,
+        p: *Parser,
+        allow_close: bool
+    ) ParseError!Data {
         var sections: ArrayList(Section) = .empty;
         errdefer {
             for (sections.items) |*sec| free(heap, sec);
@@ -326,11 +362,11 @@ const SourceContent = struct {
         }
 
         try Comments.skip(p);
-        while(p.peek() != null) {
+        while (p.peek() != null) {
             if (p.eat('}')) {
+                if (!allow_close) return Error.InvalidFormat;
                 try Comments.skip(p);
-                const data = Data {.nested = try sections.toOwnedSlice(heap)};
-                return Section {.name = name, .data = data};
+                return .{.nested = try sections.toOwnedSlice(heap)};
             }
 
             switch (try keyword(p)) {
@@ -339,6 +375,8 @@ const SourceContent = struct {
                     try sections.append(heap, child);
                 },
                 .property => |key| {
+                    if (!allow_close) return Error.InvalidFormat;
+
                     var items: ArrayList(Item) = .empty;
                     errdefer {
                         for (items.items) |*item| {
@@ -348,13 +386,40 @@ const SourceContent = struct {
                     }
 
                     try SourceContent.flat(heap, p, &items, key);
-                    const data = Data {.flat = try items.toOwnedSlice(heap)};
-                    return Section {.name = name, .data = data};
+                    return .{.flat = try items.toOwnedSlice(heap)};
                 }
             }
         }
 
-        return Error.UnexpectedEOF; // Missing closing `}`
+        return if (allow_close) Error.UnexpectedEOF
+        else .{.nested = try sections.toOwnedSlice(heap)};
+    }
+
+    fn keyword(p: *Parser) !Keyword {
+        defer _ = p.eatSp();
+
+        const token = try keywordStr(p);
+        const key = try sanitizeKeyword(token);
+        const tail = try p.peekStr(p.cursor() - 1, p.cursor());
+
+        return if (mem.eql(u8, tail, "=")) Keyword { .property = key }
+        else Keyword { .section = key };
+    }
+
+    fn keywordStr(p: *Parser) !Str {
+        const begin = p.cursor();
+        while (p.peek()) |char| {
+            if (char == '{' or char == '=') {
+                _ = try p.next();
+                return try p.peekStr(begin, p.cursor() - 1);
+            }
+            _ = try p.next();
+        }
+        return Error.UnexpectedEOF;
+    }
+
+    fn nested(heap: Allocator, p: *Parser, name: Str) ParseError!Section {
+        return .{.name = name, .data = try parseBody(heap, p, true)};
     }
 
     fn flat(
@@ -419,11 +484,11 @@ const Property = struct {
                     return pairItem(key, string(token));
                 },
                 't', 'f' => {
-                    const token = try sanitize(try bareStr(p));
+                    const token = try sanitizeValue(try bareStr(p));
                     return pairItem(key, try boolean(token));
                 },
                 else => {
-                    const token = try sanitize(try bareStr(p));
+                    const token = try sanitizeValue(try bareStr(p));
                     return pairItem(key, try number(token));
                 }
             }
@@ -434,10 +499,11 @@ const Property = struct {
 
     fn tokenStr(p: *Parser, delimiter: u8) !Str {
         const begin = p.cursor();
-        while (!p.eat(delimiter)) { _ = try p.next(); }
-        const end = p.cursor() - 1;
-
-        return try p.peekStr(begin, end);
+        while (p.peek()) |char| {
+            _ = try p.next();
+            if (char == delimiter) return try p.peekStr(begin, p.cursor() - 1);
+        }
+        return Error.UnexpectedEOF;
     }
 
     /// # Bare Value Token
@@ -487,28 +553,34 @@ const Comments = struct {
     /// # Until End of Comment or EOF
     fn parse(p: *Parser) !?void {
         if (!p.eat('#')) return null;
-        while (p.peek() != null and !p.eat('\n')) { _ = try p.next(); }
+        while (p.peek()) |char| {
+            _ = try p.next();
+            if (char == '\n') break;
+        }
     }
 };
 
+/// # Keyword Characters
+fn sanitizeKeyword(token: Str) !Str {
+    const data = mem.trim(u8, token, &ascii.whitespace);
+    if (data.len == 0) return Error.InvalidKeyword;
+
+    for (data) |char| {
+        if (ascii.isAlphanumeric(char) or char == '_') continue;
+        if (ascii.isWhitespace(char)) return Error.InvalidToken;
+        return Error.InvalidKeyword;
+    }
+
+    return data;
+}
+
 /// # Keyword And Value Tokens
-fn sanitize(token: Str) !Str {
+fn sanitizeValue(token: Str) !Str {
     const data = mem.trim(u8, token, &ascii.whitespace);
     for (data) |char| {
         if (ascii.isWhitespace(char)) return Error.InvalidToken;
     }
     return data;
-}
-
-/// # Keyword Characters
-fn validate(keyword: Str) !Str {
-    if (keyword.len == 0) return Error.InvalidKeyword;
-    for (keyword) |char| {
-        if (ascii.isAlphanumeric(char) or char == '_') continue
-        else return Error.InvalidKeyword;
-    }
-
-    return keyword;
 }
 
 test "App Config Demo" {
@@ -558,7 +630,7 @@ test "App Config Demo" {
     // Feeding file content manually because `init()` expects file path
     var p = Parser.init(src_data);
     const data = try SourceContent.parse(heap, &p);
-    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
+    try installSingleton(heap, null, src_data, data);
     defer Self.deinit();
 
     try testing.expectEqual(100, try getInt(u8, "global.prop_1"));
@@ -652,7 +724,7 @@ test "BareValuesCommentsAndQueries" {
         return err;
     };
 
-    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
+    try installSingleton(heap, null, src_data, data);
     defer Self.deinit();
 
     try expectEqual(@as(u8, 100), try getInt(u8, "global.prop_1"));
@@ -681,8 +753,35 @@ test "DeinitResetsSingleton" {
         return err;
     };
 
-    Self.so = .{.heap = heap, .env = null, .src = src_data, .secs = data};
+    try installSingleton(heap, null, src_data, data);
     Self.deinit();
 
     try testing.expect(Self.so == null);
+}
+
+test "DuplicatePairAndListNames" {
+    const expectError = testing.expectError;
+    const heap = testing.allocator;
+
+    // A pair and a list may share the same name in a flat section; each kind
+    // must stay independently queryable.
+    const src_data = try heap.dupe(u8, "demo { prop = 100\nprop = [1, 2] }");
+
+    var p = Parser.init(src_data);
+    const data = SourceContent.parse(heap, &p) catch |err| {
+        heap.free(src_data);
+        return err;
+    };
+
+    try installSingleton(heap, null, src_data, data);
+    defer Self.deinit();
+
+    try testing.expectEqual(@as(isize, 100), (try getValue("demo.prop")).number);
+
+    const values = try getList("demo.prop");
+    try testing.expectEqual(@as(isize, 1), values[0].number);
+    try testing.expectEqual(@as(isize, 2), values[1].number);
+
+    // Kind mismatches stay ordinary errors
+    try expectError(Error.InvalidQuery, getList("demo.nope"));
 }

@@ -41,14 +41,12 @@ const Self = @This();
 
 src: []const u8,
 offset: usize,
-column: usize,
-line: usize,
 
 /// # Initiates the Parser
 /// **WARNING:** Source data lifetime must be greater than the instance lifetime
 /// - `data` - Source content of plain text as the parser input
 pub fn init(data: []const u8) Self {
-    return .{.src = data, .offset = 0, .column = 0, .line = 1};
+    return .{.src = data, .offset = 0};
 }
 
 /// # Peeks a Character
@@ -84,10 +82,7 @@ pub fn next(self: *Self) !u8 {
 /// - Updates the internal parser state and returns consumed value
 fn consume(self: *Self) u8 {
     const char = self.src[self.offset];
-    if (char == SpecialChar.LF) { self.line += 1; self.column = 0; }
-    else self.column += 1;
     self.offset += 1;
-
     return char;
 }
 
@@ -125,8 +120,7 @@ fn expectStr(self: *Self, expected: []const u8) !void {
 
     const remaining = self.src[self.offset..];
     if (mem.startsWith(u8, remaining, expected)) {
-        var i: usize = 0;
-        while (i < expected.len) : (i += 1) _ = self.consume();
+        self.offset += expected.len;
         return;
     }
 
@@ -162,11 +156,22 @@ pub fn cursor(self: *const Self) usize {
 
 /// # Returns Internal State Information
 pub fn info(self: *const Self) Info {
+    const consumed = self.src[0..self.offset];
+
+    // Position tracking is only needed for diagnostics, so the hot path does
+    // not maintain it per consumed byte. Counting line feeds vectorizes well,
+    // and the column needs only a short backward scan to the last line break.
+    const line = 1 + mem.count(u8, consumed, "\n");
+    const column = if (mem.lastIndexOfScalar(u8, consumed, SpecialChar.LF)) |lf|
+        consumed.len - lf - 1
+    else
+        consumed.len;
+
     return .{
         .size = self.src.len,
         .offset = self.offset,
-        .column = self.column,
-        .line = self.line,
+        .column = column,
+        .line = line,
     };
 }
 
